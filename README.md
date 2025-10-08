@@ -1,1005 +1,346 @@
-# Kubernetes Proxy Usage Telemetry Solution# Kubernetes Proxy Usage Telemetry Solution# Kubernetes Proxy Usage Telemetry Solution
-
-
+# Kubernetes Proxy Usage Telemetry
 
 Production-grade observability solution for monitoring outbound proxy usage from thousands of crawler pods in Kubernetes using Istio service mesh.
 
+## Overview
 
+This solution provides complete visibility into proxy usage across large-scale crawler deployments, measuring and attributing all required metrics per the specification:
 
-## OverviewProduction-grade observability solution for monitoring outbound proxy usage from thousands of crawler pods in Kubernetes using Istio service mesh.Production-grade observability solution for monitoring outbound proxy usage from thousands of crawler pods in Kubernetes using Istio service mesh.
-
-
-
-This solution provides complete visibility into proxy usage across large-scale crawler deployments:
-
-
-
-- **Request count** per proxy vendor## Overview## Solution Overview
-
+- **Request count** per proxy vendor
 - **Destination tracking** (domain/host)
+- **Bandwidth sent** per proxy per pod (outgoing bytes)
+- **Bandwidth received** per proxy per pod (incoming bytes)
 
-- **Bandwidth sent** per proxy per pod
+Supports HTTP, HTTPS, HTTP/1.1, and HTTP/2 protocols with zero application code changes.
 
-- **Bandwidth received** per proxy per pod
+## Requirements Coverage
 
-This solution provides complete visibility into proxy usage across a large-scale crawler deployment, measuring and attributing all required metrics:This solution provides complete visibility into proxy usage across a large-scale crawler deployment, measuring and attributing all required metrics per the specification.
-
-Supports HTTP, HTTPS, HTTP/1.1, and HTTP/2 with zero application code changes.
-
-
+| Requirement | Implementation | Metric/Method |
+|-------------|----------------|---------------|
+| **a. Request count per proxy** | Istio telemetry with header extraction | `envoy_cluster_upstream_rq_total{proxy_vendor="..."}` |
+| **b. Destination tracking** | Envoy cluster metrics | `cluster_name` label contains destination |
+| **c. Bandwidth sent (outgoing)** | Envoy connection metrics | `envoy_cluster_upstream_cx_tx_bytes_total` |
+| **d. Bandwidth received (incoming)** | Envoy connection metrics | `envoy_cluster_upstream_cx_rx_bytes_total` |
+| **HTTP/HTTPS support** | Istio native protocol support | All protocols handled by Envoy proxy |
+| **HTTP/1 and HTTP/2** | Istio native protocol support | Automatic protocol detection |
+| **Vendor attribution** | Pod label-based | Extracted via Prometheus relabeling |
 
 ## Architecture
 
-- Request count per proxy vendor### Requirements Coverage
+### High-Level Design
 
-### Components
+```
+Crawler Pod (crawlers namespace)
+├── load-generator container
+│   └── Adds header: X-Proxy-Vendor: vendor-a
+└── istio-proxy sidecar (auto-injected)
+    ├── Intercepts all outbound traffic
+    ├── Exposes metrics on port 15090
+    └── Metrics include pod labels (proxy_vendor)
+         ↓
+    Prometheus (monitoring namespace)
+    ├── Scrapes istio-proxy:15090/stats/prometheus
+    ├── Relabels metrics with proxy_vendor from pod labels
+    └── Stores: envoy_cluster_upstream_rq_total{proxy_vendor="vendor-a"}
+         ↓
+    Grafana Dashboards
+    ├── Proxy Overview
+    ├── Bandwidth Analytics
+    ├── Destination Tracking
+    └── Performance & Health
+```
 
-- Destination tracking (domain/host)
-
-**Istio Service Mesh**
-
-- Automatic sidecar injection for transparent telemetry- Bandwidth sent per proxy per pod| Requirement | Implementation | Metric/Method |
-
-- Traffic interception and metrics collection
-
-- Header-based vendor attribution- Bandwidth received per proxy per pod|-------------|----------------|---------------|
-
-
-
-**Load Generators**| **a. Request count per proxy** | Istio telemetry with header extraction | `istio_requests_total{proxy_vendor="..."}` |
-
-- Python async application simulating crawlers
-
-- Adds `X-Proxy-Vendor` header for attributionSupports HTTP, HTTPS, HTTP/1.1, and HTTP/2 protocols with zero application code changes.| **b. Destination tracking** | Istio telemetry captures host/domain | `istio_requests_total{destination_service_name="..."}` |
-
-- 100 req/s per pod (configurable)
-
-| **c. Bandwidth sent (outgoing)** | Istio request bytes per pod/proxy | `istio_request_bytes_sum{proxy_vendor="...", pod_name="..."}` |
-
-**Prometheus**
-
-- Scrapes Istio Envoy sidecars for metrics## Architecture| **d. Bandwidth received (incoming)** | Istio response bytes per pod/proxy | `istio_response_bytes_sum{proxy_vendor="...", pod_name="..."}` |
-
-- 30-day retention with recording rules
-
-- Handles 500K+ time series| **HTTP/HTTPS support** | Istio native protocol support | All protocols handled by Envoy proxy |
-
-
-
-**Grafana**### Components| **HTTP/1 and HTTP/2** | Istio native protocol support | Automatic protocol detection |
-
-- 4 pre-built dashboards
-
-- Real-time monitoring| **Vendor attribution** | Header-based (X-Proxy-Vendor) | Extracted via Istio Telemetry API |
-
-- Vendor-attributed views
+### Key Components
 
 1. **Istio Service Mesh**
+   - Automatic sidecar injection (zero app changes)
+   - Traffic interception and telemetry
+   - Native HTTP/HTTPS/HTTP2 support
 
-### Data Flow
+2. **Load Generators** (Synthetic Crawlers)
+   - Python async application
+   - Adds `X-Proxy-Vendor` header to all requests
+   - Simulates 3 proxy vendors (vendor-a, vendor-b, vendor-c)
+   - Makes requests to various HTTP/HTTPS endpoints
 
-   - Automatic sidecar injection for transparent telemetry## Architecture
+3. **Prometheus**
+   - Scrapes Istio Envoy sidecars (port 15090)
+   - Stores time-series metrics with vendor labels
+   - 30-day retention (configurable)
+   - Recording rules for aggregations
 
-```
-
-Crawler Pod   - Traffic interception and metrics collection
-
-  -> Application (adds X-Proxy-Vendor header)
-
-  -> Istio Sidecar (intercepts traffic, emits metrics)   - Header-based vendor attribution via Telemetry API### High-Level Design
-
-  -> Prometheus (collects and stores)
-
-  -> Grafana (visualizes)
-
-```
-
-2. **Load Generators** (Synthetic Crawlers)```
+4. **Grafana**
+   - 4 pre-built dashboards
+   - Real-time visualization
+   - Vendor attribution across all views
+   - Admin credentials: admin/admin
 
 ## Quick Start
-
-   - Python async application simulating crawler behaviorCrawler Pod (crawlers namespace)
 
 ### Prerequisites
 
-   - Adds `X-Proxy-Vendor` header for attribution├── load-generator container
+- Kubernetes cluster (minikube, k3s, or any K8s 1.24+)
+- kubectl configured
+- Helm 3.x installed
+- 8GB RAM, 4 CPU cores recommended
 
-- Kubernetes 1.24+
-
-- kubectl CLI   - Configurable traffic patterns (100 req/s per pod default)│   └── Adds header: X-Proxy-Vendor: vendor-a
-
-- Helm 3.x
-
-- 8GB RAM, 4 CPU minimum└── istio-proxy sidecar (auto-injected)
-
-
-
-### Installation3. **Prometheus**    ├── Intercepts all outbound traffic
-
-
-
-**1. Bootstrap Cluster** (for minikube):   - Scrapes Istio Envoy sidecars for metrics    ├── Extracts proxy_vendor from headers
+### One-Command Deployment
 
 ```bash
-
-./scripts/bootstrap-cluster.sh   - 30-day retention with recording rules    └── Emits metrics with vendor labels
-
-```
-
-   - Supports up to 500K time series         ↓
-
-**2. Deploy Solution**:
-
-```bash    Prometheus
-
 ./deploy.sh
-
-```4. **Grafana**    ├── Scrapes istio-proxy:15090/stats/prometheus
-
-
-
-Or use Helm directly:   - Pre-built dashboards for visualization    ├── Stores: istio_requests_total{proxy_vendor="vendor-a"}
-
-```bash
-
-helm install proxy-telemetry ./helm/proxy-telemetry -n monitoring --create-namespace   - Real-time monitoring and analysis    ├── Stores: istio_request_bytes_sum{proxy_vendor="vendor-a", pod_name="..."}
-
 ```
 
-   - Vendor-attributed views    └── Stores: istio_response_bytes_sum{proxy_vendor="vendor-a", pod_name="..."}
+The script will:
+1. Clean up any existing resources
+2. Deploy the complete stack (Istio + Prometheus + Grafana + Load Generators)
+3. Validate metrics collection
+4. Prompt to open dashboards automatically
 
-**3. Verify**:
+**Duration:** 3-5 minutes
 
-```bash         ↓
+### Manual Deployment
 
-./scripts/validate-istio-metrics.sh
-
-```### Data Flow    Grafana Dashboards
-
-
-
-**4. Access Dashboards**:    ├── Proxy Overview
+If you prefer step-by-step control:
 
 ```bash
+# 1. Bootstrap cluster (minikube only)
+./scripts/bootstrap-cluster.sh
 
-kubectl port-forward -n monitoring svc/grafana 3000:80 &```    ├── Bandwidth Analytics
+# 2. Deploy via Helm
+helm install proxy-telemetry ./helm/proxy-telemetry -n monitoring --create-namespace --wait
 
+# 3. Validate metrics
+./scripts/validate-istio-metrics.sh
+
+# 4. Access dashboards
+kubectl port-forward -n monitoring svc/grafana 3000:80 &
 kubectl port-forward -n monitoring svc/prometheus 9090:9090 &
+```
 
-```Crawler Pod    ├── Destination Tracking
+### Access Dashboards
 
-- Grafana: http://localhost:3000 (admin/admin)
+**Grafana:** http://localhost:3000
+- Username: `admin`
+- Password: `admin`
+- Navigate to: **Dashboards → Proxy Telemetry**
 
-- Prometheus: http://localhost:9090  └── Application Container (adds X-Proxy-Vendor header)    └── Performance & Health
+**Prometheus:** http://localhost:9090
 
+Available dashboards:
+- **Proxy Overview** - Request rates, totals by vendor
+- **Bandwidth Analytics** - Bytes sent/received per vendor
+- **Destination Tracking** - Top destinations by vendor
+- **Performance & Health** - Latency, errors, success rates
 
+## Configuration
 
-## Configuration  └── Istio Sidecar (intercepts traffic, emits metrics)```
+### Traffic Generation
 
+Edit `helm/proxy-telemetry/values.yaml`:
 
-
-Edit `helm/proxy-telemetry/values.yaml`:         |
-
-
-
-```yaml         v### Key Components
-
+```yaml
 loadGenerator:
-
-  replicas: 21  # Total pods    Prometheus (collects and stores metrics)
-
+  replicas: 9  # Total pods (3 per vendor for minikube)
   traffic:
-
-    requestsPerSecond: 100  # Per pod         |1. **Istio Service Mesh**
-
+    requestsPerSecond: 100  # Per pod
     concurrentRequests: 100
+```
 
-         v   - Automatic sidecar injection (zero app changes)
+Expected traffic: ~900 requests/second total (with 9 pods)
 
+### Resource Allocation
+
+Default per-pod resources:
+
+```yaml
 resources:
-
-  requests:    Grafana (visualizes data)   - Traffic interception and telemetry
-
+  requests:
     memory: "512Mi"
-
-    cpu: "500m"```   - Header-based vendor attribution via Telemetry API
-
+    cpu: "500m"
   limits:
-
-    memory: "1Gi"   - Native HTTP/HTTPS/HTTP2 support
-
+    memory: "1Gi"
     cpu: "1000m"
+```
 
-## Quick Start
+Total cluster requirement: ~9-12 CPU cores, ~9-12GB RAM
 
+### Proxy Vendors
+
+Configure vendors and traffic distribution:
+
+```yaml
 vendors:
-
-  - name: vendor-a2. **Load Generators** (Synthetic Crawlers)
-
-    weight: 40
-
-  - name: vendor-b### Prerequisites   - Python async application
-
-    weight: 35
-
-  - name: vendor-c   - Adds `X-Proxy-Vendor` header to all requests
-
-    weight: 25
-
-```- Kubernetes 1.24+   - Simulates 3 proxy vendors (vendor-a, vendor-b, vendor-c)
-
-
-
-**Expected Traffic**: ~2,100 requests/second total- kubectl CLI configured   - Makes requests to various HTTP/HTTPS endpoints
-
-
-
-## Metrics- Helm 3.x
-
-
-
-### Key Metrics- 8GB RAM, 4 CPU cores minimum3. **Prometheus**
-
-
-
-| Metric | Description | Labels |   - Scrapes Istio Envoy sidecars (port 15090)
-
-|--------|-------------|--------|
-
-| `envoy_cluster_upstream_rq_total` | Total requests | proxy_vendor, pod_name, response_code |### Installation   - Stores time-series metrics with vendor labels
-
-| `envoy_cluster_upstream_cx_tx_bytes_total` | Bytes sent | proxy_vendor, pod_name |
-
-| `envoy_cluster_upstream_cx_rx_bytes_total` | Bytes received | proxy_vendor, pod_name |   - 30-day retention (configurable)
-
-
-
-### Example Queries1. **Bootstrap Cluster** (if using minikube):   - Recording rules for aggregations
-
-
-
-```promql
-
-# Request rate by vendor
-
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[1m]))```bash4. **Grafana**
-
-
-
-# Bandwidth sent per vendor./scripts/bootstrap-cluster.sh   - 4 pre-built dashboards
-
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_cx_tx_bytes_total[1m]))
-
-```   - Real-time visualization
-
-# Bandwidth received per pod
-
-sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_rx_bytes_total[1m]))   - Vendor attribution across all views
-
-
-
-# Top destinations2. **Deploy Solution**:   - Admin credentials: admin/admin
-
-topk(10, sum by (destination_host) (rate(envoy_cluster_upstream_rq_total[1m])))
-
+  - name: vendor-a
+    weight: 40  # 40% of traffic
+  - name: vendor-b
+    weight: 35  # 35% of traffic
+  - name: vendor-c
+    weight: 25  # 25% of traffic
 ```
 
-
-
-## Scaling```bash## Quick Start
-
-
-
-**Horizontal** (more pods):./deploy.sh
-
-```bash
-
-kubectl scale deployment -n crawlers -l app=load-generator --replicas=10```### Prerequisites
-
-```
-
-
-
-**Vertical** (more requests per pod):
-
-```bashOr manually with Helm:- Kubernetes cluster (minikube, k3s, or any K8s 1.24+)
-
-kubectl set env deployment -n crawlers -l app=load-generator REQUESTS_PER_SECOND=200
-
-```- kubectl configured
-
-
-
-## Dashboards```bash- Helm 3.x installed
-
-
-
-Four pre-configured Grafana dashboards:helm install proxy-telemetry ./helm/proxy-telemetry -n monitoring --create-namespace- 8GB RAM, 4 CPU cores recommended
-
-
-
-1. **Proxy Overview** - Request rates, success rates, bandwidth```
-
-2. **Bandwidth Analytics** - Inbound/outbound by vendor and pod
-
-3. **Destination Tracking** - Top destinations, response times### Bootstrap Cluster (minikube)
-
-4. **Performance & Health** - Latency, errors, resource usage
-
-3. **Verify Deployment**:
-
-## Production Deployment
-
-```bash
-
-Before production:
-
-```bash# Start minikube with sufficient resources
-
-1. **Update credentials**:
-
-   ```yaml./scripts/validate-istio-metrics.shminikube start --cpus=4 --memory=8192 --driver=docker
-
-   grafana:
-
-     adminPassword: <secure-password>```
-
-   ```
-
-# Or use the provided bootstrap script
-
-2. **Configure storage**:
-
-   ```yaml4. **Access Dashboards**:./scripts/bootstrap-cluster.sh
-
-   prometheus:
-
-     storage:```
-
-       volumeSize: 500Gi
-
-       storageClassName: <production-class>```bash
-
-   ```
-
-# Port forward services### Deploy Complete Stack
-
-3. **Enable TLS**: Update load generator SSL settings
-
-4. **Network policies**: Implement namespace isolationkubectl port-forward -n monitoring svc/grafana 3000:80 &
-
-5. **Alerting**: Configure Alertmanager endpoints
-
-kubectl port-forward -n monitoring svc/prometheus 9090:9090 &```bash
-
-See `DEPLOYMENT-GUIDE.md` for complete instructions.
-
-# Single command deployment
-
-## Troubleshooting
-
-# Access in browser# Automatically installs: Istio -> Prometheus -> Grafana -> Load Generators
-
-### No Metrics
-
-# Grafana: http://localhost:3000 (admin/admin)./deploy.sh
-
-Verify sidecar injection:
-
-```bash# Prometheus: http://localhost:9090```
-
-kubectl get namespace crawlers --show-labels
-
-# Should show: istio-injection=enabled```
-
-
-
-kubectl get pods -n crawlers**Deployment Process:**
-
-# Should show: 2/2 READY
-
-```## Configuration1. Cleans up any existing resources
-
-
-
-Fix if needed:2. Creates monitoring namespace
-
-```bash
-
-kubectl label namespace crawlers istio-injection=enabled --overwrite### Traffic Generation3. Helm pre-install hook checks/installs Istio
-
-kubectl rollout restart deployment -n crawlers -l app=load-generator
-
-```4. Deploys Prometheus with Istio metric scraping
-
-
-
-### Pods PendingEdit `helm/proxy-telemetry/values.yaml`:5. Deploys Grafana with 4 dashboards
-
-
-
-Check resources:6. Deploys load generators with Istio sidecar injection
-
-```bash
-
-kubectl top nodes```yaml7. Helm post-install hook validates stack health
-
-```
-
-loadGenerator:
-
-Reduce replicas:
-
-```bash  replicas: 21  # Total pods (distributed across vendors)**Duration:** 3-5 minutes
-
-kubectl scale deployment -n crawlers -l app=load-generator --replicas=5
-
-```  traffic:
-
-
-
-### High Errors    requestsPerSecond: 100  # Per pod### Access Dashboards
-
-
-
-Check logs:    concurrentRequests: 100
-
-```bash
-
-kubectl logs -n crawlers -l app=load-generator -c load-generator --tail=50``````bash
-
-```
-
-# Port-forward Grafana
-
-Common causes: rate limiting, network issues, DNS failures
-
-Expected traffic: ~2,100 requests/second totalkubectl port-forward -n monitoring svc/grafana 3000:80
-
-## Documentation
-
-```
-
-- `DEPLOYMENT-GUIDE.md` - Complete deployment instructions
-
-- `ARCHITECTURE.md` - System design and architecture### Resource Allocation
-
-- `DATA-MODEL.md` - Metrics schema and queries
-
-- `CHANGES.md` - Configuration changesOpen: http://localhost:3000
-
-- `PROJECT-STRUCTURE.md` - Repository organization
-
-Default per-pod resources:- Username: admin
-
-## Validation
-
-- Password: admin
-
-Run validation:
-
-```bash```yaml
-
-./scripts/validate-istio-metrics.sh
-
-```resources:Navigate to: **Dashboards → Proxy Telemetry**
-
-
-
-Expected output:  requests:
-
-- Found N pods with Istio sidecars: SUCCESS
-
-- Request count metrics: SUCCESS    memory: "512Mi"Available dashboards:
-
-- Destination tracking: SUCCESS
-
-- Bandwidth sent: SUCCESS    cpu: "500m"- **Proxy Overview** - Request rates, totals by vendor
-
-- Bandwidth received: SUCCESS
-
-  limits:- **Bandwidth Analytics** - Bytes sent/received per vendor
-
-## Support
-
-    memory: "1Gi"- **Destination Tracking** - Top destinations by vendor
-
-For issues:
-
-1. Check pod logs    cpu: "1000m"- **Performance & Health** - Latency, errors, success rates
-
-2. Run validation script
-
-3. Review documentation```
-
-4. Check troubleshooting section
-
-### Validate Metrics
-
-Total cluster requirement: ~11 CPU cores, ~11GB RAM
-
-```bash
-
-### Proxy Vendors# Automated validation of all 4 requirements
-
-./scripts/validate-istio-metrics.sh
-
-Configure vendors and traffic distribution:```
-
-
-
-```yamlExpected output:
-
-vendors:```
-
-  - name: vendor-aRequirement A: Request count per proxy vendor
-
-    weight: 40  # Percentage  vendor-a: 1523 requests
-
-  - name: vendor-b  vendor-b: 1401 requests
-
-    weight: 35  vendor-c: 1389 requests
-
-  - name: vendor-c  Status: PASS
-
-    weight: 25
-
-```Requirement B: Destination tracking
-
-  example.com: 245 requests
-
-## Metrics  httpbin.org: 312 requests
-
-  Status: PASS
-
-### Key Metrics
-
-Requirement C: Bandwidth sent (outgoing bytes)
-
-| Metric | Description | Labels |  vendor-a: 245678 bytes
-
-|--------|-------------|--------|  vendor-b: 198234 bytes
-
-| `envoy_cluster_upstream_rq_total` | Total requests | proxy_vendor, pod_name, response_code |  Status: PASS
-
-| `envoy_cluster_upstream_cx_tx_bytes_total` | Bytes sent | proxy_vendor, pod_name |
-
-| `envoy_cluster_upstream_cx_rx_bytes_total` | Bytes received | proxy_vendor, pod_name |Requirement D: Bandwidth received (incoming bytes)
-
-  vendor-a: 1247890 bytes
-
-### Example Queries  vendor-b: 1098765 bytes
-
-  Status: PASS
-
-```promql```
-
-# Request rate by vendor
-
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[1m]))## Data Model
-
-
-
-# Bandwidth sent per vendorSee [DATA-MODEL.md](DATA-MODEL.md) for complete schema.
-
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_cx_tx_bytes_total[1m]))
+## Metrics
 
 ### Core Metrics
 
-# Bandwidth received per pod
-
-sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_rx_bytes_total[1m]))**istio_requests_total** (Counter)
-
-- Description: Total HTTP requests through the service mesh
-
-# Top destinations- Labels:
-
-topk(10, sum by (destination_host) (rate(envoy_cluster_upstream_rq_total[1m])))  - `proxy_vendor`: Vendor identifier (vendor-a, vendor-b, vendor-c)
-
-```  - `destination_service_name`: Target domain/host
-
-  - `response_code`: HTTP status code
-
-## Scaling  - `pod_name`: Source pod identifier
-
-  - `reporter`: source (client-side metrics)
-
-### Horizontal Scaling
-
-**istio_request_bytes_sum** (Counter)
-
-Increase number of crawler pods:- Description: Total request payload bytes sent (outgoing)
-
-- Labels: `proxy_vendor`, `pod_name`, `reporter`
-
-```bash
-
-kubectl scale deployment -n crawlers \**istio_response_bytes_sum** (Counter)
-
-  load-generator-vendor-a \- Description: Total response payload bytes received (incoming)
-
-  load-generator-vendor-b \- Labels: `proxy_vendor`, `pod_name`, `reporter`
-
-  load-generator-vendor-c \
-
-  --replicas=10**istio_request_duration_milliseconds** (Histogram)
-
-```- Description: Request latency distribution
-
-- Labels: `proxy_vendor`, `response_code`
-
-### Vertical Scaling
+| Metric | Description | Labels |
+|--------|-------------|--------|
+| `envoy_cluster_upstream_rq_total` | Total requests | proxy_vendor, pod_name, cluster_name, response_code |
+| `envoy_cluster_upstream_cx_tx_bytes_total` | Bytes sent (outgoing) | proxy_vendor, pod_name, cluster_name |
+| `envoy_cluster_upstream_cx_rx_bytes_total` | Bytes received (incoming) | proxy_vendor, pod_name, cluster_name |
 
 ### Example Queries
 
+```promql
+# Requirement A: Request rate per vendor
+sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m]))
+
+# Requirement B: Top destinations
+topk(10, sum by (cluster_name, proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m])))
+
+# Requirement C: Bandwidth sent per vendor per pod
+sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_tx_bytes_total[5m]))
+
+# Requirement D: Bandwidth received per vendor per pod
+sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_rx_bytes_total[5m]))
+```
+
+## Validation
+
+Run comprehensive validation:
+
+```bash
+./scripts/validate-istio-metrics.sh
+```
+
+Expected output:
+```
+Requirement A: Request count per proxy vendor
+  vendor-a: 1523 requests
+  vendor-b: 1401 requests
+  vendor-c: 1389 requests
+  Status: PASS
+
+Requirement B: Destination tracking
+  httpbin.org: 312 requests
+  example.com: 245 requests
+  Status: PASS
+
+Requirement C: Bandwidth sent (outgoing bytes)
+  vendor-a: 245678 bytes
+  vendor-b: 198234 bytes
+  Status: PASS
+
+Requirement D: Bandwidth received (incoming bytes)
+  vendor-a: 1247890 bytes
+  vendor-b: 1098765 bytes
+  Status: PASS
+```
+
+## Scaling
+
+### Horizontal Scaling
+
+Increase number of crawler pods:
+
+```bash
+# Scale all vendors
+kubectl scale deployment -n crawlers --all --replicas=10
+
+# Scale specific vendor
+kubectl scale deployment load-generator-vendor-a -n crawlers --replicas=20
+```
+
+### Vertical Scaling
+
 Increase requests per second:
 
-```promql
-
-```bash# Requirement A: Request count per proxy vendor
-
-kubectl set env deployment -n crawlers -l app=load-generator \sum by (proxy_vendor) (istio_requests_total{reporter="source"})
-
-  REQUESTS_PER_SECOND=200
-
-```# Requirement B: Destination tracking
-
-topk(10, sum by (destination_service_name, proxy_vendor) (rate(istio_requests_total{reporter="source"}[5m])))
-
-## Grafana Dashboards
-
-# Requirement C: Bandwidth sent per proxy per pod
-
-Four pre-configured dashboards:sum by (proxy_vendor, pod_name) (rate(istio_request_bytes_sum{reporter="source"}[5m]))
-
-
-
-1. **Proxy Overview**# Requirement D: Bandwidth received per proxy per pod
-
-   - Total request rates by vendorsum by (proxy_vendor, pod_name) (rate(istio_response_bytes_sum{reporter="source"}[5m]))
-
-   - Success rates and error rates```
-
-   - Active crawler pod counts
-
-   - Total bandwidth usage## Deployment Architecture
-
-
-
-2. **Bandwidth Analytics**### Helm Chart Structure
-
-   - Outbound/inbound bandwidth by vendor
-
-   - Top bandwidth-consuming pods```
-
-   - 24-hour transfer totalshelm/proxy-telemetry/
-
-   - Transfer rate histograms├── Chart.yaml                          # Helm chart metadata
-
-├── values.yaml                         # Configuration values
-
-3. **Destination Tracking**├── istio-telemetry.yaml               # Istio Telemetry API config
-
-   - Top destinations by request count└── templates/
-
-   - Requests per destination per vendor    ├── 00-prerequisites-job.yaml      # Pre-install: Istio setup
-
-   - Destination response times    ├── 01-validation-job.yaml         # Post-install: Validation
-
-   - Geographic distribution    ├── grafana-dashboards.yaml        # Dashboard definitions
-
-    ├── grafana-deployment.yaml        # Grafana deployment
-
-4. **Performance & Health**    ├── load-generator.yaml            # Synthetic crawler pods
-
-   - Request latency (P50, P95, P99)    ├── prometheus-configmap.yaml      # Prometheus config
-
-   - Error rates per vendor    └── prometheus-deployment.yaml     # Prometheus deployment
-
-   - Pod health status```
-
-   - Resource utilization
-
-### Namespaces
+```bash
+kubectl set env deployment -n crawlers -l app=load-generator REQUESTS_PER_SECOND=200
+```
 
 ## Production Deployment
 
-- **monitoring**: Prometheus, Grafana
+Before deploying to production:
 
-Before deploying to production:- **crawlers**: Load generator pods (with Istio sidecar injection)
-
-- **istio-system**: Istio control plane (auto-created)
-
-1. **Update Credentials**:
-
-## How It Works
+### 1. Update Credentials
 
 ```yaml
-
-grafana:### 1. Vendor Attribution via Headers
-
+grafana:
   adminPassword: <secure-password>
+```
 
-```Load generators add vendor identification:
+### 2. Configure Storage
 
+```yaml
+prometheus:
+  storage:
+    volumeSize: 500Gi
+    storageClassName: <production-class>
+```
 
+### 3. Enable Alerting
 
-2. **Configure Storage**:```python
+Configure Alertmanager endpoints in values.yaml.
 
-headers = {
-
-```yaml    'X-Proxy-Vendor': 'vendor-a',
-
-prometheus:    'X-Proxy-Pool': 'residential',
-
-  storage:    'User-Agent': 'Crawler-v1.0'
-
-    volumeSize: 500Gi}
-
-    storageClassName: <production-class>async with aiohttp.ClientSession(headers=headers) as session:
-
-```    async with session.get(url) as response:
-
-        # Traffic automatically flows through Istio sidecar
-
-3. **Enable Alerting**:```
-
-
-
-Configure Alertmanager endpoints in values.yaml.### 2. Automatic Traffic Interception
-
-
-
-4. **Set Up TLS**:- Istio automatically injects `istio-proxy` sidecar into crawler pods
-
-- No application code changes required
-
-Enable SSL verification in load generator and configure ingress with TLS.- All outbound traffic intercepted via iptables rules
-
-- Works for HTTP, HTTPS, HTTP/1, HTTP/2
-
-5. **Network Policies**:
-
-### 3. Telemetry Extraction
+### 4. Network Policies
 
 Implement NetworkPolicy resources for namespace isolation.
 
-Istio Telemetry API configuration extracts vendor from headers:
+### 5. Resource Limits
 
-See `PRODUCTION-CHECKLIST.md` for complete list.
+Adjust based on cluster capacity (see [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)).
 
-```yaml
+## Troubleshooting
 
-## TroubleshootingapiVersion: telemetry.istio.io/v1alpha1
+### No Metrics Appearing
 
-kind: Telemetry
+Verify Istio sidecar injection:
 
-### No Metrics Appearingspec:
+```bash
+kubectl get namespace crawlers --show-labels
+# Should show: istio-injection=enabled
 
-  metrics:
+kubectl get pods -n crawlers
+# Should show: 2/2 READY (app + istio-proxy)
+```
 
-Verify Istio sidecar injection:  - overrides:
+Fix if needed:
 
-    - match:
-
-```bash        metric: REQUEST_COUNT
-
-kubectl get namespace crawlers --show-labels      tagOverrides:
-
-# Should show: istio-injection=enabled        proxy_vendor:
-
-          value: "request.headers['x-proxy-vendor'] | 'unknown'"
-
-kubectl get pods -n crawlers```
-
-# Should show: 2/2 READY
-
-```### 4. Metrics Collection
-
-
-
-Fix if needed:Prometheus scrapes Istio Envoy sidecars:
-
-
-
-```bash```yaml
-
-kubectl label namespace crawlers istio-injection=enabled --overwritescrape_configs:
-
-kubectl rollout restart deployment -n crawlers -l app=load-generator- job_name: 'istio-envoy-sidecars'
-
-```  kubernetes_sd_configs:
-
-  - role: pod
-
-### High Error Rates    namespaces: [crawlers]
-
-  relabel_configs:
-
-Check pod logs:  - source_labels: [__meta_kubernetes_pod_container_name]
-
-    regex: 'istio-proxy'
-
-```bash    action: keep
-
-kubectl logs -n crawlers -l app=load-generator -c load-generator --tail=50  - source_labels: [__meta_kubernetes_pod_ip]
-
-```    target_label: __address__
-
-    replacement: $1:15090
-
-Common causes:```
-
-- External site rate limiting
-
-- Network connectivity issues### 5. Visualization
-
-- DNS resolution failures
-
-Grafana queries Prometheus using PromQL:
+```bash
+kubectl label namespace crawlers istio-injection=enabled --overwrite
+kubectl rollout restart deployment -n crawlers -l app=load-generator
+```
 
 ### Pods Pending
 
-```promql
-
-Check cluster resources:# Request rate per vendor
-
-sum by (proxy_vendor) (rate(istio_requests_total{reporter="source"}[5m]))
+Check cluster resources:
 
 ```bash
-
-kubectl top nodes# Bandwidth sent per vendor
-
-```sum by (proxy_vendor) (rate(istio_request_bytes_sum{reporter="source"}[5m]))
-
+kubectl top nodes
 ```
 
 Reduce replicas if insufficient resources:
 
-## Production Deployment
-
 ```bash
-
-kubectl scale deployment -n crawlers -l app=load-generator --replicas=5See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed production deployment guide.
-
+kubectl scale deployment -n crawlers -l app=load-generator --replicas=3
 ```
 
-### Configuration
+### High Error Rates
 
-## Documentation
-
-Customize via `helm/proxy-telemetry/values.yaml`:
-
-- `DEPLOYMENT-GUIDE.md` - Complete deployment instructions
-
-- `ARCHITECTURE.md` - Detailed architecture and design decisions```yaml
-
-- `DATA-MODEL.md` - Metrics schema and query examplesloadGenerator:
-
-- `REQUIREMENTS-COMPLIANCE.md` - Requirements mapping  replicas: 9  # Total replicas across vendors
-
-- `PRODUCTION-CHECKLIST.md` - Production readiness checklist  vendors:
-
-- `CHANGES.md` - Configuration changes and improvements    - name: vendor-a
-
-      weight: 40  # 40% of traffic
-
-## Validation    - name: vendor-b
-
-      weight: 35
-
-Run comprehensive validation:    - name: vendor-c
-
-      weight: 25
+Check pod logs:
 
 ```bash
-
-./scripts/validate-istio-metrics.shprometheus:
-
-```  retention: 30d
-
-  storage:
-
-Expected output:    size: 50Gi
-
-- Found N pods with Istio sidecars
-
-- Request count metrics: SUCCESSgrafana:
-
-- Destination tracking: SUCCESS  persistence:
-
-- Bandwidth sent metrics: SUCCESS    enabled: true
-
-- Bandwidth received metrics: SUCCESS    size: 10Gi
-
+kubectl logs -n crawlers -l app=load-generator -c load-generator --tail=50
 ```
 
-## Support
+Common causes:
+- External site rate limiting
+- Network connectivity issues
+- DNS resolution failures
 
-### Scaling
-
-For issues:
-
-1. Check pod logs```bash
-
-2. Run validation script# Scale specific vendor
-
-3. Review troubleshooting sectionkubectl scale deployment load-generator-vendor-a -n crawlers --replicas=20
-
-4. Check documentation
-
-# Adjust request rate per pod
-
-## Licensekubectl set env deployment/load-generator-vendor-a -n crawlers REQUESTS_PER_SECOND=50
-
-```
-
-Internal use only.
-
-## Validation & Testing
-
-### Verify Istio Sidecar Injection
+### View Installation Logs
 
 ```bash
-kubectl get pods -n crawlers -o wide
-```
-
-Expected: `2/2 Running` (load-generator + istio-proxy)
-
-### Query Prometheus Directly
-
-```bash
-# Port-forward Prometheus
-kubectl port-forward -n monitoring svc/prometheus 9090:9090
-
-# Access at http://localhost:9090
-# Run query: sum by (proxy_vendor) (rate(istio_requests_total{reporter="source"}[5m]))
-```
-
-### View Raw Envoy Metrics
-
-```bash
-POD=$(kubectl get pods -n crawlers -l app=load-generator -o name | head -1)
-kubectl exec -n crawlers $POD -c istio-proxy -- curl -s localhost:15090/stats/prometheus | grep istio_requests_total
-```
-
-## Troubleshooting
-
-### Pods show 1/2 containers
-
-**Issue:** Istio sidecar not injected
-
-**Fix:**
-```bash
-kubectl label namespace crawlers istio-injection=enabled --overwrite
-kubectl rollout restart deployment -n crawlers
-```
-
-### No metrics in Prometheus
-
-**Check scrape targets:**
-```bash
-kubectl port-forward -n monitoring svc/prometheus 9090:9090
-# Visit: http://localhost:9090/targets
-# Verify: istio-envoy-sidecars targets are UP
-```
-
-### Grafana dashboards empty
-
-1. Verify time range: Use "Last 15 minutes"
-2. Refresh dashboard
-3. Check Prometheus data source: Settings → Data Sources → Prometheus → Test
-4. Run validation: `./scripts/validate-istio-metrics.sh`
-
-### View installation logs
-
-```bash
-# Istio installation logs
-kubectl logs -n monitoring job/istio-installer
-
-# Validation logs
-kubectl logs -n monitoring job/stack-validator
-
 # Load generator logs
 kubectl logs -n crawlers -l app=load-generator -c load-generator --tail=50
 
@@ -1007,40 +348,19 @@ kubectl logs -n crawlers -l app=load-generator -c load-generator --tail=50
 kubectl logs -n crawlers -l app=load-generator -c istio-proxy --tail=50
 ```
 
-## Demo Guide
+## Documentation
 
-See [DEMO-GUIDE.md](DEMO-GUIDE.md) for complete live demonstration script.
-
-### Quick Demo (5 minutes)
-
-```bash
-# 1. Deploy stack
-./deploy.sh
-
-# 2. Show Istio sidecar injection (2/2 containers)
-kubectl get pods -n crawlers -o wide
-
-# 3. Validate all 4 requirements
-./scripts/validate-istio-metrics.sh
-
-# 4. Open Grafana
-kubectl port-forward -n monitoring svc/grafana 3000:80
-# Navigate to: Dashboards → Proxy Telemetry
-
-# 5. Show Prometheus queries
-kubectl port-forward -n monitoring svc/prometheus 9090:9090
-# Query: sum by (proxy_vendor) (rate(istio_requests_total{reporter="source"}[5m]))
-
-# 6. Demonstrate scaling
-kubectl scale deployment load-generator-vendor-a -n crawlers --replicas=10
-# Show metrics scale proportionally in Grafana
-```
+- [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) - Complete deployment instructions
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Detailed architecture and design decisions
+- [DATA-MODEL.md](DATA-MODEL.md) - Metrics schema and query examples
+- [PROJECT-STRUCTURE.md](PROJECT-STRUCTURE.md) - Repository organization
+- [QUICK-COMMIT-GUIDE.md](QUICK-COMMIT-GUIDE.md) - Git commit strategy
 
 ## Technology Stack
 
 - **Service Mesh:** Istio 1.20+
-- **Metrics Storage:** Prometheus 2.45+
-- **Visualization:** Grafana 10.0+
+- **Metrics Storage:** Prometheus 2.47+
+- **Visualization:** Grafana 10.1+
 - **Load Generator:** Python 3.11 with aiohttp
 - **Deployment:** Helm 3.x
 - **Container Runtime:** Docker/containerd
@@ -1049,9 +369,9 @@ kubectl scale deployment load-generator-vendor-a -n crawlers --replicas=10
 
 | Scale | Crawler Pods | Throughput | Resource Usage |
 |-------|-------------|------------|----------------|
-| **Development** | 10-100 | 1K req/min | 2GB RAM, 1 CPU |
-| **Production** | 1,000 | 100K req/min | 8GB RAM, 4 CPU |
-| **Enterprise** | 5,000+ | 1M+ req/min | 32GB+ RAM, 16+ CPU |
+| **Development** | 9 | 900 req/s | 4GB RAM, 4 CPU |
+| **Production** | 100 | 10K req/s | 16GB RAM, 8 CPU |
+| **Enterprise** | 1,000+ | 100K+ req/s | 64GB+ RAM, 32+ CPU |
 
 ## Cleanup
 
@@ -1069,39 +389,76 @@ istioctl uninstall --purge -y
 minikube delete
 ```
 
-## Files Structure
+## Repository Structure
 
 ```
 .
 ├── README.md                           # This file
 ├── ARCHITECTURE.md                     # Architecture deep-dive
 ├── DATA-MODEL.md                       # Metrics schema and queries
-├── DEMO-GUIDE.md                       # Live demo script
-├── DEPLOYMENT.md                       # Production deployment guide
-├── deploy.sh                           # Main deployment script
-├── Makefile                            # Convenience commands
-├── helm/proxy-telemetry/              # Helm chart
+├── DEPLOYMENT-GUIDE.md                 # Production deployment guide
+├── deploy.sh                           # Automated deployment script
+├── Makefile                            # Build automation
+├── helm/proxy-telemetry/               # Helm chart
 │   ├── Chart.yaml
 │   ├── values.yaml
 │   ├── istio-telemetry.yaml
 │   └── templates/
+│       ├── namespaces.yaml
+│       ├── prometheus-*.yaml
+│       ├── grafana-*.yaml
+│       ├── load-generator.yaml
+│       └── istio-prerequisites-job.yaml
 └── scripts/
-    ├── bootstrap-cluster.sh
-    ├── open-dashboards.sh
-    └── validate-istio-metrics.sh
+    ├── bootstrap-cluster.sh            # Cluster setup
+    ├── open-dashboards.sh              # Dashboard access
+    └── validate-istio-metrics.sh       # Health check
 ```
 
-## Summary
+## How It Works
 
-This solution provides a production-ready, self-contained package for Kubernetes proxy usage telemetry that:
+### 1. Vendor Attribution
 
-- Meets all 4 requirements (a-d) with automated validation
-- Supports HTTP/HTTPS, HTTP/1, HTTP/2 protocols
-- Uses open-source technologies (Istio, Prometheus, Grafana)
-- Provides complete observability with vendor attribution
-- Includes synthetic load generator for testing
-- Offers 4 pre-built Grafana dashboards
-- Auto-installs all prerequisites via Helm hooks
-- Works on minikube/k3s/any Kubernetes cluster
+Load generators are labeled with their proxy vendor:
 
-**Quick Start:** `./deploy.sh` → Answer 'y' to open dashboards → Grafana opens automatically at http://localhost:3000 (admin/admin)
+```yaml
+metadata:
+  labels:
+    app: load-generator
+    proxy-vendor: vendor-a  # Kubernetes label
+```
+
+### 2. Traffic Interception
+
+- Istio automatically injects `istio-proxy` sidecar into crawler pods
+- All outbound traffic intercepted via iptables rules
+- Works for HTTP, HTTPS, HTTP/1, HTTP/2 without app changes
+
+### 3. Metrics Export
+
+Envoy sidecar exposes metrics on port 15090:
+
+```
+envoy_cluster_upstream_rq_total{cluster_name="httpbin.org:443"} 1523
+envoy_cluster_upstream_cx_tx_bytes_total{cluster_name="httpbin.org:443"} 245678
+```
+
+### 4. Label Enrichment
+
+Prometheus relabeling adds proxy_vendor from pod labels:
+
+```yaml
+relabel_configs:
+- source_labels: [__meta_kubernetes_pod_label_proxy_vendor]
+  target_label: proxy_vendor
+```
+
+### 5. Visualization
+
+Grafana dashboards query Prometheus:
+
+```promql
+sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m]))
+```
+
+**Quick Start:** `./deploy.sh` → Answer 'y' to open dashboards → Grafana opens automatically at http://localhost:3000
