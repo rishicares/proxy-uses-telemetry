@@ -1,0 +1,134 @@
+---
+# Job to install and configure Istio prerequisites
+{{- if .Values.istio.autoInstall }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: istio-installer
+  namespace: {{ .Values.global.monitoringNamespace }}
+  labels:
+    app: istio-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      labels:
+        app: istio-installer
+    spec:
+      serviceAccountName: istio-installer
+      restartPolicy: OnFailure
+      containers:
+      - name: installer
+        image: istio/istioctl:1.20.1
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          
+          echo "============================================"
+          echo "  Istio Installation Check & Setup"
+          echo "============================================"
+          
+          # Check if Istio is already installed
+          if kubectl get namespace istio-system &>/dev/null; then
+            echo "[OK] Istio namespace exists"
+            if kubectl get deployment istiod -n istio-system &>/dev/null; then
+              echo "[OK] Istio control plane (istiod) is already installed"
+              echo "     Skipping Istio installation..."
+            else
+              echo "[WARN] Istio namespace exists but control plane missing"
+              echo "       Installing Istio..."
+              istioctl install --set profile=demo -y
+            fi
+          else
+            echo "[WARN] Istio not found"
+            echo "       Installing Istio with demo profile..."
+            istioctl install --set profile=demo -y
+          fi
+          
+          # Wait for Istio to be ready
+          echo ""
+          echo "Waiting for Istio control plane to be ready..."
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/istiod -n istio-system || true
+          
+          # Enable sidecar injection on crawlers namespace
+          echo ""
+          echo "Configuring namespaces..."
+          kubectl create namespace {{ .Values.global.crawlersNamespace }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label namespace {{ .Values.global.crawlersNamespace }} istio-injection=enabled --overwrite
+          
+          echo ""
+          echo "[OK] Istio setup complete!"
+          echo "============================================"
+---
+# ServiceAccount for Istio installer job
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: istio-installer
+  namespace: {{ .Values.global.monitoringNamespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+# ClusterRole for Istio installer
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: istio-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "create", "patch", "update"]
+- apiGroups: [""]
+  resources: ["services", "serviceaccounts", "configmaps", "secrets"]
+  verbs: ["*"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets"]
+  verbs: ["*"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
+  verbs: ["*"]
+- apiGroups: ["networking.istio.io"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["install.istio.io"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+  verbs: ["*"]
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["*"]
+---
+# ClusterRoleBinding for Istio installer
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: istio-installer
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: istio-installer
+subjects:
+- kind: ServiceAccount
+  name: istio-installer
+  namespace: {{ .Values.global.monitoringNamespace }}
+{{- end }}
+

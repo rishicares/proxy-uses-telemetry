@@ -1,0 +1,165 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                                                                            ║
+║          Proxy Telemetry Stack Successfully Deployed!                  ║
+║                                                                            ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+[STATS] MONITORING STACK STATUS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Release Name:      {{ .Release.Name }}
+Namespace:         {{ .Release.Namespace }}
+Chart Version:     {{ .Chart.Version }}
+App Version:       {{ .Chart.AppVersion }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[CHECK] CHECKING DEPLOYMENT STATUS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Run the following commands to check the status:
+
+  # Check monitoring namespace
+  kubectl get pods -n {{ .Values.global.monitoringNamespace }}
+
+  # Check crawlers namespace
+  kubectl get pods -n {{ .Values.global.crawlersNamespace }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[WEB] ACCESSING DASHBOARDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{{- if .Values.grafana.enabled }}
+
+[GRAPH] GRAFANA
+─────────────────────────────────────────────────────────────────────────────
+
+  1. Port-forward to Grafana:
+
+     kubectl port-forward -n {{ .Values.global.monitoringNamespace }} svc/grafana 3000:{{ .Values.grafana.service.port }}
+
+  2. Open in browser:
+
+     URL:      http://localhost:3000
+     Username: admin
+     Password: {{ .Values.grafana.adminPassword }}
+
+  3. Available Dashboards:
+     • Proxy Overview Dashboard
+     • Bandwidth Analytics Dashboard
+     • Performance & Health Dashboard
+     • Destination Tracking Dashboard
+
+{{- end }}
+
+{{- if .Values.prometheus.enabled }}
+
+[STATS] PROMETHEUS
+─────────────────────────────────────────────────────────────────────────────
+
+  1. Port-forward to Prometheus:
+
+     kubectl port-forward -n {{ .Values.global.monitoringNamespace }} svc/prometheus {{ .Values.prometheus.service.port }}:{{ .Values.prometheus.service.port }}
+
+  2. Open in browser:
+
+     URL: http://localhost:{{ .Values.prometheus.service.port }}
+
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[OK] VALIDATING METRICS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Run these queries in Prometheus to verify metrics are being collected:
+
+  # Requirement A: Request count per proxy vendor
+  sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m]))
+
+  # Requirement B: Destination tracking
+  topk(10, sum by (destination_host, proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m])))
+
+  # Requirement C: Bandwidth sent (outgoing)
+  sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_tx_bytes_total[5m]))
+
+  # Requirement D: Bandwidth received (incoming)
+  sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_rx_bytes_total[5m]))
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[CONFIG]  CONFIGURATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{{- if .Values.loadGenerator.enabled }}
+
+Load Generators Deployed:
+{{- range .Values.loadGenerator.vendors }}
+  • {{ .name }} (weight: {{ .weight }}%)
+{{- end }}
+
+Adjust traffic rate:
+  kubectl set env deployment/load-generator-vendor-a -n {{ .Values.global.crawlersNamespace }} REQUESTS_PER_SECOND=50
+
+Scale load generators:
+  kubectl scale deployment -n {{ .Values.global.crawlersNamespace }} load-generator-vendor-a --replicas=10
+
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[DOCS] DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For detailed documentation, see:
+  • README.md - Architecture and overview
+  • DEPLOYMENT-GUIDE.md - Comprehensive deployment guide
+  • DATA-MODEL.md - Metrics schema and queries
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[DEBUG] TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If metrics are not appearing:
+
+  1. Check Envoy sidecars are running:
+     kubectl get pods -n {{ .Values.global.crawlersNamespace }} -o wide
+
+  2. Verify Envoy metrics endpoint:
+     POD=$(kubectl get pods -n {{ .Values.global.crawlersNamespace }} -l app=load-generator -o name | head -1)
+     kubectl exec -n {{ .Values.global.crawlersNamespace }} $POD -c envoy -- wget -qO- localhost:{{ .Values.envoy.metricsPort }}/stats/prometheus | head -20
+
+  3. Check Prometheus targets:
+     kubectl port-forward -n {{ .Values.global.monitoringNamespace }} svc/prometheus 9090:9090
+     # Visit: http://localhost:9090/targets
+
+  4. View logs:
+     kubectl logs -n {{ .Values.global.crawlersNamespace }} -l app=load-generator -c envoy --tail=50
+     kubectl logs -n {{ .Values.global.crawlersNamespace }} -l app=load-generator -c load-generator --tail=50
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[TARGET] QUICK VERIFICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Wait ~60 seconds for metrics to populate, then check:
+
+  # Port-forward Prometheus
+  kubectl port-forward -n {{ .Values.global.monitoringNamespace }} svc/prometheus 9090:9090 &
+
+  # Query request rate
+  curl -s 'http://localhost:9090/api/v1/query?query=sum(rate(envoy_cluster_upstream_rq_total[5m]))by(proxy_vendor)' | jq '.data.result'
+
+  # If you see data, you're all set! 
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ Thank you for using Proxy Telemetry! 
+
+For issues or questions, refer to the comprehensive documentation or check logs.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+

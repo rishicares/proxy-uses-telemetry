@@ -1,0 +1,37 @@
+---
+# Istio Telemetry API - Extract proxy vendor from X-Proxy-Vendor header
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: proxy-vendor-telemetry
+  namespace: crawlers
+spec:
+  selector:
+    matchLabels:
+      app: load-generator
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: REQUEST_COUNT
+      tagOverrides:
+        proxy_vendor:
+          value: "request.headers['x-proxy-vendor'] | 'unknown'"
+        destination_host:
+          value: "request.host | 'unknown'"
+    - match:
+        metric: REQUEST_DURATION
+      tagOverrides:
+        proxy_vendor:
+          value: "request.headers['x-proxy-vendor'] | 'unknown'"
+    - match:
+        metric: REQUEST_SIZE
+      tagOverrides:
+        proxy_vendor:
+          value: "request.headers['x-proxy-vendor'] | 'unknown'"
+    - match:
+        metric: RESPONSE_SIZE
+      tagOverrides:
+        proxy_vendor:
+          value: "request.headers['x-proxy-vendor'] | 'unknown'"

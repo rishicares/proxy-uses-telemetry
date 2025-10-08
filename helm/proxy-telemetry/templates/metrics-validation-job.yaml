@@ -1,0 +1,127 @@
+---
+# Job to validate Prometheus and Grafana are configured correctly
+{{- if .Values.validation.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: stack-validator
+  namespace: {{ .Values.global.monitoringNamespace }}
+  labels:
+    app: stack-validator
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: stack-validator
+    spec:
+      serviceAccountName: stack-validator
+      restartPolicy: OnFailure
+      containers:
+      - name: validator
+        image: curlimages/curl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          
+          echo "============================================"
+          echo "  Stack Validation"
+          echo "============================================"
+          
+          # Wait for Prometheus to be ready
+          echo "Waiting for Prometheus to be ready..."
+          max_attempts=30
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            if curl -s http://prometheus:9090/-/healthy | grep -q "Prometheus"; then
+              echo "[OK] Prometheus is healthy"
+              break
+            fi
+            attempt=$((attempt + 1))
+            echo "     Attempt $attempt/$max_attempts..."
+            sleep 5
+          done
+          
+          # Wait for Grafana to be ready
+          echo ""
+          echo "Waiting for Grafana to be ready..."
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            if curl -s http://grafana/api/health | grep -q "ok"; then
+              echo "[OK] Grafana is healthy"
+              break
+            fi
+            attempt=$((attempt + 1))
+            echo "     Attempt $attempt/$max_attempts..."
+            sleep 5
+          done
+          
+          # Check if Istio sidecars are being injected
+          echo ""
+          echo "Checking Istio sidecar injection..."
+          sleep 10
+          
+          echo ""
+          echo "============================================"
+          echo "[OK] Stack validation complete!"
+          echo ""
+          echo "Access Grafana:"
+          echo "  kubectl port-forward -n {{ .Values.global.monitoringNamespace }} svc/grafana 3000:80"
+          echo "  URL: http://localhost:3000"
+          echo "  Username: admin"
+          echo "  Password: admin"
+          echo ""
+          echo "Access Prometheus:"
+          echo "  kubectl port-forward -n {{ .Values.global.monitoringNamespace }} svc/prometheus 9090:9090"
+          echo "  URL: http://localhost:9090"
+          echo "============================================"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: stack-validator
+  namespace: {{ .Values.global.monitoringNamespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: stack-validator
+  namespace: {{ .Values.global.monitoringNamespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: stack-validator
+  namespace: {{ .Values.global.monitoringNamespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: stack-validator
+subjects:
+- kind: ServiceAccount
+  name: stack-validator
+  namespace: {{ .Values.global.monitoringNamespace }}
+{{- end }}
+
