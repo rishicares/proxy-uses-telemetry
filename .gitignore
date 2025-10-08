@@ -1,0 +1,41 @@
+# Kubernetes
+*.kubeconfig
+kubeconfig
+*.key
+*.crt
+
+# Helm
+*.tgz
+.deploy/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv
+
+# OS
+Thumbs.db
+
+
