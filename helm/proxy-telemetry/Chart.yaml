@@ -1,0 +1,24 @@
+apiVersion: v2
+name: proxy-telemetry
+description: Production-ready Kubernetes proxy usage telemetry system with Envoy, Prometheus, and Grafana
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - proxy
+  - telemetry
+  - observability
+  - envoy
+  - prometheus
+  - grafana
+  - crawler
+maintainers:
+  - name: Platform Team
+    email: platform@example.com
+home: https://github.com/example/proxy-telemetry
+sources:
+  - https://github.com/example/proxy-telemetry
+icon: https://raw.githubusercontent.com/cncf/artwork/master/projects/prometheus/icon/color/prometheus-icon-color.svg
+dependencies: []
+
+

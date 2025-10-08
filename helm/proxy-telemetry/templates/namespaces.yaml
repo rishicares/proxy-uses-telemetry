@@ -1,0 +1,11 @@
+---
+# Namespace for crawler pods
+# Note: monitoring namespace is created by Helm's --create-namespace flag
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.crawlersNamespace }}
+  labels:
+    istio-injection: enabled
+    app.kubernetes.io/part-of: proxy-telemetry
+    app.kubernetes.io/component: crawlers

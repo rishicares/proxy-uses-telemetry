@@ -1,0 +1,255 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: {{ .Values.global.monitoringNamespace }}
+  labels:
+    app: prometheus
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: {{ .Values.prometheus.scrapeInterval }}
+      evaluation_interval: {{ .Values.prometheus.evaluationInterval }}
+      external_labels:
+        cluster: 'proxy-telemetry'
+        environment: 'production'
+
+    # Alerting configuration
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: []
+
+    # Load recording and alerting rules
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    # Scrape configurations
+    scrape_configs:
+      # Prometheus self-monitoring
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Istio Envoy sidecars in crawler pods
+      - job_name: 'istio-envoy-sidecars'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - {{ .Values.global.crawlersNamespace }}
+        
+        relabel_configs:
+          # Only scrape pods with Istio sidecar
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            action: keep
+            regex: 'istio-proxy'
+          
+          # Extract pod name
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod_name
+          
+          # Extract namespace
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+          
+          # Extract proxy vendor from pod label (K8s converts proxy-vendor to proxy_vendor in metadata)
+          - source_labels: [__meta_kubernetes_pod_label_proxy_vendor]
+            action: replace
+            target_label: proxy_vendor
+            regex: (.+)
+            replacement: $1
+          
+          # Set metrics endpoint (Istio sidecar exposes on port 15090)
+          - source_labels: [__meta_kubernetes_pod_ip]
+            action: replace
+            target_label: __address__
+            regex: (.+)
+            replacement: $1:15090
+          
+          # Set metrics path
+          - source_labels: []
+            target_label: __metrics_path__
+            replacement: /stats/prometheus
+          
+          # Keep only labeled pods with proxy-vendor label
+          - source_labels: [__meta_kubernetes_pod_label_proxy_vendor]
+            action: keep
+            regex: .+
+        
+        metric_relabel_configs:
+          # Keep only relevant Envoy/Istio metrics for proxy telemetry
+          - source_labels: [__name__]
+            regex: '(envoy_cluster_upstream_(rq_total|rq_time.*|cx_tx_bytes_total|cx_rx_bytes_total)|envoy_cluster_external_upstream_rq|istio_(requests_total|request_duration_milliseconds.*|request_bytes.*|response_bytes.*|tcp_sent_bytes_total|tcp_received_bytes_total))'
+            action: keep
+
+      # Kubernetes cluster metrics
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      # Kubernetes pods
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+
+  recording_rules.yml: |
+    groups:
+      - name: proxy_telemetry_recording_rules
+        interval: 15s
+        rules:
+          # Request rates by vendor
+          - record: proxy:requests_per_second:vendor
+            expr: sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m]))
+          
+          # Request rates by vendor and pod
+          - record: proxy:requests_per_second:vendor_pod
+            expr: sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_rq_total[5m]))
+          
+          # Bandwidth out by vendor (bytes/sec)
+          - record: proxy:bandwidth_out_bytes_per_second:vendor
+            expr: sum by (proxy_vendor) (rate(envoy_cluster_upstream_cx_tx_bytes_total[5m]))
+          
+          # Bandwidth in by vendor (bytes/sec)
+          - record: proxy:bandwidth_in_bytes_per_second:vendor
+            expr: sum by (proxy_vendor) (rate(envoy_cluster_upstream_cx_rx_bytes_total[5m]))
+          
+          # Total bandwidth per pod
+          - record: proxy:bandwidth_per_pod:vendor_pod
+            expr: |
+              sum by (proxy_vendor, pod_name) (
+                rate(envoy_cluster_upstream_cx_tx_bytes_total[5m]) +
+                rate(envoy_cluster_upstream_cx_rx_bytes_total[5m])
+              )
+          
+          # Error rate by vendor
+          - record: proxy:error_rate:vendor
+            expr: |
+              sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total{response_code=~"[45].."}[5m])) /
+              sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m]))
+          
+          # Success rate by vendor
+          - record: proxy:success_rate:vendor
+            expr: |
+              sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total{response_code=~"[23].."}[5m])) /
+              sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m]))
+          
+          # P99 latency by vendor
+          - record: proxy:request_duration_p99:vendor
+            expr: |
+              histogram_quantile(0.99,
+                sum by (proxy_vendor, le) (rate(envoy_cluster_upstream_rq_time_bucket[5m]))
+              )
+          
+          # P95 latency by vendor
+          - record: proxy:request_duration_p95:vendor
+            expr: |
+              histogram_quantile(0.95,
+                sum by (proxy_vendor, le) (rate(envoy_cluster_upstream_rq_time_bucket[5m]))
+              )
+          
+          # P50 latency by vendor
+          - record: proxy:request_duration_p50:vendor
+            expr: |
+              histogram_quantile(0.50,
+                sum by (proxy_vendor, le) (rate(envoy_cluster_upstream_rq_time_bucket[5m]))
+              )
+
+  alerting_rules.yml: |
+    groups:
+      - name: proxy_alerts
+        rules:
+          # High error rate alert
+          - alert: ProxyHighErrorRate
+            expr: proxy:error_rate:vendor > 0.10
+            for: 5m
+            labels:
+              severity: warning
+              component: proxy
+            annotations:
+              summary: "High error rate for proxy vendor {{`{{ $labels.proxy_vendor }}`}}"
+              description: "Error rate is {{`{{ $value | humanizePercentage }}`}} for vendor {{`{{ $labels.proxy_vendor }}`}}"
+          
+          # Critical error rate
+          - alert: ProxyCriticalErrorRate
+            expr: proxy:error_rate:vendor > 0.25
+            for: 2m
+            labels:
+              severity: critical
+              component: proxy
+            annotations:
+              summary: "Critical error rate for proxy vendor {{`{{ $labels.proxy_vendor }}`}}"
+              description: "Error rate is {{`{{ $value | humanizePercentage }}`}} for vendor {{`{{ $labels.proxy_vendor }}`}}"
+          
+          # High latency alert
+          - alert: ProxyHighLatency
+            expr: proxy:request_duration_p99:vendor > 5
+            for: 10m
+            labels:
+              severity: warning
+              component: proxy
+            annotations:
+              summary: "High latency for proxy vendor {{`{{ $labels.proxy_vendor }}`}}"
+              description: "P99 latency is {{`{{ $value }}`}}s for vendor {{`{{ $labels.proxy_vendor }}`}}"
+          
+          # No metrics from crawler pods
+          - alert: ProxyMetricsDown
+            expr: up{job="crawler-envoy"} == 0
+            for: 2m
+            labels:
+              severity: critical
+              component: monitoring
+            annotations:
+              summary: "Proxy metrics collection down"
+              description: "No metrics from crawler pod {{`{{ $labels.pod_name }}`}}"
+          
+          # Crawler pod restarts
+          - alert: CrawlerPodRestarting
+            expr: rate(kube_pod_container_status_restarts_total{namespace="crawlers"}[1h]) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+              component: crawler
+            annotations:
+              summary: "Crawler pod restarting frequently"
+              description: "Pod {{`{{ $labels.pod }}`}} in namespace {{`{{ $labels.namespace }}`}} is restarting frequently"
+          
+          # Bandwidth spike alert
+          - alert: ProxyBandwidthSpike
+            expr: |
+              (
+                rate(envoy_cluster_upstream_cx_tx_bytes_total[5m]) +
+                rate(envoy_cluster_upstream_cx_rx_bytes_total[5m])
+              ) > 104857600
+            for: 10m
+            labels:
+              severity: info
+              component: proxy
+            annotations:
+              summary: "Bandwidth spike detected"
+              description: "High bandwidth usage detected for vendor {{`{{ $labels.proxy_vendor }}`}}: {{`{{ $value | humanize }}`}}B/s"
+{{- end }}
+

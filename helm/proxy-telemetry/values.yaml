@@ -1,0 +1,258 @@
+# Default values for proxy-telemetry
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+global:
+  # Monitoring namespace for Prometheus and Grafana
+  monitoringNamespace: monitoring
+  # Crawlers namespace for load generator and crawler pods
+  crawlersNamespace: crawlers
+
+# Istio installation behavior
+istio:
+  autoInstall: false  # Set true to let Helm pre-install hook install Istio
+
+# Prometheus configuration
+prometheus:
+  enabled: true
+  image:
+    repository: prom/prometheus
+    tag: v2.47.0
+    pullPolicy: IfNotPresent
+  
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "8Gi"
+      cpu: "4000m"
+  
+  retention:
+    time: 30d
+    size: 50GB
+  
+  # Scrape configuration
+  scrapeInterval: 15s
+  evaluationInterval: 15s
+  
+  storage:
+    volumeSize: 100Gi
+    storageClassName: standard  # Change based on cluster
+  
+  service:
+    type: ClusterIP
+    port: 9090
+  
+  # RBAC for service discovery
+  rbac:
+    create: true
+  
+  serviceAccount:
+    create: true
+    name: prometheus
+
+# Grafana configuration
+grafana:
+  enabled: true
+  image:
+    repository: grafana/grafana
+    tag: 10.1.5
+    pullPolicy: IfNotPresent
+  
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+  
+  adminPassword: admin  # Change in production!
+  
+  service:
+    type: ClusterIP
+    port: 80
+  
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: standard
+  
+  # Pre-configured datasource
+  datasources:
+    - name: Prometheus
+      type: prometheus
+      url: http://prometheus.monitoring.svc.cluster.local:9090
+      access: proxy
+      isDefault: true
+
+# Load Generator configuration
+loadGenerator:
+  enabled: true
+  # Number of load generator replicas (divided equally among vendors)
+  # Note: 21 replicas (7 per vendor) requires ~21 CPU cores. Minikube (4 CPUs) supports 9 replicas.
+  replicas: 9  # 3 replicas per vendor - fits minikube cluster (4 CPU, 8GB RAM)
+  
+  image:
+    repository: python
+    tag: "3.11-slim"
+    pullPolicy: IfNotPresent
+  
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+  
+  # Traffic simulation parameters
+  traffic:
+    requestsPerSecond: 100
+    concurrentRequests: 100
+    httpRatio: 0.5  # 50% HTTP, 50% HTTPS
+    http2Enabled: true
+  
+  # Proxy vendors configuration
+  vendors:
+    - name: vendor-a
+      weight: 40  # 40% of traffic
+      proxyUrl: "http://proxy-vendor-a.example.com:8080"
+      auth:
+        enabled: false
+    - name: vendor-b
+      weight: 35  # 35% of traffic
+      proxyUrl: "http://proxy-vendor-b.example.com:8080"
+      auth:
+        enabled: false
+    - name: vendor-c
+      weight: 25  # 25% of traffic
+      proxyUrl: "http://proxy-vendor-c.example.com:8080"
+      auth:
+        enabled: false
+  
+  # Target destinations for crawlers
+  destinations:
+    - "https://httpbin.org"
+    - "https://jsonplaceholder.typicode.com"
+    - "https://api.github.com"
+    - "https://www.wikipedia.org"
+    - "http://example.com"
+    - "http://httpforever.com"
+  
+  # Horizontal Pod Autoscaler
+  autoscaling:
+    enabled: false  # Disabled for consistent high-traffic demo
+    minReplicas: 7  # 21 total replicas / 3 vendors
+    maxReplicas: 50
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# Envoy Sidecar configuration
+envoy:
+  image:
+    repository: envoyproxy/envoy
+    tag: v1.28.0
+    pullPolicy: IfNotPresent
+  
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+  
+  # Admin interface port
+  adminPort: 15000
+  # Metrics port
+  metricsPort: 15090
+  # Proxy listener port
+  proxyPort: 8888
+  
+  # Logging level (trace, debug, info, warning, error, critical)
+  logLevel: info
+  
+  # Access logs
+  accessLog:
+    enabled: true
+    format: |
+      [%START_TIME%] "%REQ(:METHOD)% %REQ(X-ENVOY-ORIGINAL-PATH?:PATH)% %PROTOCOL%" %RESPONSE_CODE% %RESPONSE_FLAGS% %BYTES_RECEIVED% %BYTES_SENT% %DURATION% "%REQ(X-PROXY-VENDOR)%" "%UPSTREAM_HOST%"
+
+# Metrics and monitoring configuration
+metrics:
+  # ServiceMonitor for Prometheus Operator (optional)
+  serviceMonitor:
+    enabled: false
+    interval: 15s
+    scrapeTimeout: 10s
+  
+  # Recording rules
+  recordingRules:
+    enabled: true
+  
+  # Alerting rules
+  alerting:
+    enabled: true
+
+# Post-install validation
+validation:
+  enabled: true
+    
+# Mock External Proxy Service
+# This simulates the external proxy vendors for testing
+mockProxyService:
+  enabled: true
+  replicas: 3
+  
+  image:
+    repository: kennethreitz/httpbin
+    tag: latest
+    pullPolicy: IfNotPresent
+  
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+# RBAC configuration
+rbac:
+  create: true
+
+# Service accounts
+serviceAccount:
+  create: true
+  annotations: {}
+
+# Pod Security Policy
+podSecurityPolicy:
+  enabled: false
+
+# Network Policies
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+
+# Security Context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+  capabilities:
+    drop:
+      - ALL
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+
