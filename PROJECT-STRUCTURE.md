@@ -7,8 +7,7 @@ Production-ready file organization for the Kubernetes Proxy Usage Telemetry solu
 ├── README.md                           # Main documentation & quick start
 ├── ARCHITECTURE.md                     # Architecture deep-dive & design decisions
 ├── DATA-MODEL.md                       # Metrics schema & PromQL queries
-├── DEMO-GUIDE.md                       # Live demonstration script
-├── DEPLOYMENT.md                       # Comprehensive deployment guide
+├── DEPLOYMENT-GUIDE.md                 # Comprehensive deployment guide
 ├── PROJECT-STRUCTURE.md                # This file
 │
 ├── deploy.sh                           # Main deployment script
@@ -41,10 +40,9 @@ Production-ready file organization for the Kubernetes Proxy Usage Telemetry solu
 | File | Purpose | Audience |
 |------|---------|----------|
 | `README.md` | Main entry point, quick start, overview | Everyone |
-| `DEPLOYMENT.md` | Detailed deployment guide, troubleshooting | Operators |
+| `DEPLOYMENT-GUIDE.md` | Detailed deployment guide, troubleshooting | Operators |
 | `ARCHITECTURE.md` | Design decisions, trade-offs | Engineers |
 | `DATA-MODEL.md` | Metrics schema, PromQL queries | Developers |
-| `DEMO-GUIDE.md` | Live demonstration script | Presenters |
 | `PROJECT-STRUCTURE.md` | File organization (this file) | Contributors |
 
 ### Deployment
@@ -129,5 +127,3 @@ make dashboards    # Port-forward Grafana
 make status        # Show deployment status
 make clean         # Remove deployment
 ```
-
-

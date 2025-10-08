@@ -17,13 +17,13 @@ Supports HTTP, HTTPS, HTTP/1.1, and HTTP/2 protocols with zero application code 
 
 | Requirement | Implementation | Metric/Method |
 |-------------|----------------|---------------|
-| **a. Request count per proxy** | Istio telemetry with header extraction | `envoy_cluster_upstream_rq_total{proxy_vendor="..."}` |
-| **b. Destination tracking** | Envoy cluster metrics | `cluster_name` label contains destination |
-| **c. Bandwidth sent (outgoing)** | Envoy connection metrics | `envoy_cluster_upstream_cx_tx_bytes_total` |
-| **d. Bandwidth received (incoming)** | Envoy connection metrics | `envoy_cluster_upstream_cx_rx_bytes_total` |
+| **a. Request count per proxy** | Istio telemetry with header extraction | `istio_requests_total{proxy_vendor="..."}` |
+| **b. Destination tracking** | Istio telemetry metrics | `destination_host` label contains destination |
+| **c. Bandwidth sent (outgoing)** | Istio telemetry metrics | `istio_request_bytes_sent` |
+| **d. Bandwidth received (incoming)** | Istio telemetry metrics | `istio_response_bytes_received` |
 | **HTTP/HTTPS support** | Istio native protocol support | All protocols handled by Envoy proxy |
 | **HTTP/1 and HTTP/2** | Istio native protocol support | Automatic protocol detection |
-| **Vendor attribution** | Pod label-based | Extracted via Prometheus relabeling |
+| **Vendor attribution** | Istio telemetry header extraction | Extracted from X-Proxy-Vendor header |
 
 ## Architecture
 
@@ -33,15 +33,15 @@ Supports HTTP, HTTPS, HTTP/1.1, and HTTP/2 protocols with zero application code 
 Crawler Pod (crawlers namespace)
 ├── load-generator container
 │   └── Adds header: X-Proxy-Vendor: vendor-a
-└── istio-proxy sidecar (auto-injected)
-    ├── Intercepts all outbound traffic
+└── istio-proxy sidecar (auto-injected by Istio)
+    ├── Intercepts all outbound traffic via Istio
     ├── Exposes metrics on port 15090
-    └── Metrics include pod labels (proxy_vendor)
+    └── Istio telemetry extracts vendor from headers
          ↓
     Prometheus (monitoring namespace)
     ├── Scrapes istio-proxy:15090/stats/prometheus
-    ├── Relabels metrics with proxy_vendor from pod labels
-    └── Stores: envoy_cluster_upstream_rq_total{proxy_vendor="vendor-a"}
+    ├── Relabels metrics with proxy_vendor from Istio telemetry
+    └── Stores: istio_requests_total{proxy_vendor="vendor-a"}
          ↓
     Grafana Dashboards
     ├── Proxy Overview
@@ -82,7 +82,7 @@ Crawler Pod (crawlers namespace)
 - Kubernetes cluster (minikube, k3s, or any K8s 1.24+)
 - kubectl configured
 - Helm 3.x installed
-- 8GB RAM, 4 CPU cores recommended
+- Sufficient resources for your deployment scale
 
 ### One-Command Deployment
 
@@ -96,7 +96,7 @@ The script will:
 3. Validate metrics collection
 4. Prompt to open dashboards automatically
 
-**Duration:** 3-5 minutes
+**Duration:** Depends on cluster resources and network speed
 
 ### Manual Deployment
 
@@ -146,7 +146,7 @@ loadGenerator:
     concurrentRequests: 100
 ```
 
-Expected traffic: ~900 requests/second total (with 9 pods)
+Traffic generation configurable via values.yaml
 
 ### Resource Allocation
 
@@ -162,7 +162,7 @@ resources:
     cpu: "1000m"
 ```
 
-Total cluster requirement: ~9-12 CPU cores, ~9-12GB RAM
+Resource requirements depend on replica count and traffic configuration
 
 ### Proxy Vendors
 
@@ -184,24 +184,24 @@ vendors:
 
 | Metric | Description | Labels |
 |--------|-------------|--------|
-| `envoy_cluster_upstream_rq_total` | Total requests | proxy_vendor, pod_name, cluster_name, response_code |
-| `envoy_cluster_upstream_cx_tx_bytes_total` | Bytes sent (outgoing) | proxy_vendor, pod_name, cluster_name |
-| `envoy_cluster_upstream_cx_rx_bytes_total` | Bytes received (incoming) | proxy_vendor, pod_name, cluster_name |
+| `istio_requests_total` | Total requests | proxy_vendor, pod_name, destination_host, response_code |
+| `istio_request_bytes_sent` | Bytes sent (outgoing) | proxy_vendor, pod_name, destination_host |
+| `istio_response_bytes_received` | Bytes received (incoming) | proxy_vendor, pod_name, destination_host |
 
 ### Example Queries
 
 ```promql
 # Requirement A: Request rate per vendor
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m]))
+sum by (proxy_vendor) (rate(istio_requests_total[5m]))
 
 # Requirement B: Top destinations
-topk(10, sum by (cluster_name, proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m])))
+topk(10, sum by (destination_host, proxy_vendor) (rate(istio_requests_total[5m])))
 
 # Requirement C: Bandwidth sent per vendor per pod
-sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_tx_bytes_total[5m]))
+sum by (proxy_vendor, pod_name) (rate(istio_request_bytes_sent[5m]))
 
 # Requirement D: Bandwidth received per vendor per pod
-sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_rx_bytes_total[5m]))
+sum by (proxy_vendor, pod_name) (rate(istio_response_bytes_received[5m]))
 ```
 
 ## Validation
@@ -212,29 +212,7 @@ Run comprehensive validation:
 ./scripts/validate-istio-metrics.sh
 ```
 
-Expected output:
-```
-Requirement A: Request count per proxy vendor
-  vendor-a: 1523 requests
-  vendor-b: 1401 requests
-  vendor-c: 1389 requests
-  Status: PASS
-
-Requirement B: Destination tracking
-  httpbin.org: 312 requests
-  example.com: 245 requests
-  Status: PASS
-
-Requirement C: Bandwidth sent (outgoing bytes)
-  vendor-a: 245678 bytes
-  vendor-b: 198234 bytes
-  Status: PASS
-
-Requirement D: Bandwidth received (incoming bytes)
-  vendor-a: 1247890 bytes
-  vendor-b: 1098765 bytes
-  Status: PASS
-```
+The validation script checks all four requirements and reports PASS/FAIL status for each.
 
 ## Scaling
 
@@ -354,7 +332,6 @@ kubectl logs -n crawlers -l app=load-generator -c istio-proxy --tail=50
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Detailed architecture and design decisions
 - [DATA-MODEL.md](DATA-MODEL.md) - Metrics schema and query examples
 - [PROJECT-STRUCTURE.md](PROJECT-STRUCTURE.md) - Repository organization
-- [QUICK-COMMIT-GUIDE.md](QUICK-COMMIT-GUIDE.md) - Git commit strategy
 
 ## Technology Stack
 
@@ -367,11 +344,7 @@ kubectl logs -n crawlers -l app=load-generator -c istio-proxy --tail=50
 
 ## Performance Characteristics
 
-| Scale | Crawler Pods | Throughput | Resource Usage |
-|-------|-------------|------------|----------------|
-| **Development** | 9 | 900 req/s | 4GB RAM, 4 CPU |
-| **Production** | 100 | 10K req/s | 16GB RAM, 8 CPU |
-| **Enterprise** | 1,000+ | 100K+ req/s | 64GB+ RAM, 32+ CPU |
+Performance depends on cluster resources, replica count, and traffic configuration. Adjust resources and replicas based on your requirements.
 
 ## Cleanup
 
@@ -419,46 +392,28 @@ minikube delete
 
 ### 1. Vendor Attribution
 
-Load generators are labeled with their proxy vendor:
-
-```yaml
-metadata:
-  labels:
-    app: load-generator
-    proxy-vendor: vendor-a  # Kubernetes label
-```
+Load generators add X-Proxy-Vendor header to requests, which Istio telemetry extracts.
 
 ### 2. Traffic Interception
 
 - Istio automatically injects `istio-proxy` sidecar into crawler pods
-- All outbound traffic intercepted via iptables rules
+- All outbound traffic intercepted via Istio service mesh
 - Works for HTTP, HTTPS, HTTP/1, HTTP/2 without app changes
 
 ### 3. Metrics Export
 
-Envoy sidecar exposes metrics on port 15090:
-
-```
-envoy_cluster_upstream_rq_total{cluster_name="httpbin.org:443"} 1523
-envoy_cluster_upstream_cx_tx_bytes_total{cluster_name="httpbin.org:443"} 245678
-```
+Istio sidecar exposes metrics on port 15090 with telemetry-extracted labels.
 
 ### 4. Label Enrichment
 
-Prometheus relabeling adds proxy_vendor from pod labels:
-
-```yaml
-relabel_configs:
-- source_labels: [__meta_kubernetes_pod_label_proxy_vendor]
-  target_label: proxy_vendor
-```
+Istio telemetry API extracts proxy_vendor from X-Proxy-Vendor header and adds it to metrics.
 
 ### 5. Visualization
 
-Grafana dashboards query Prometheus:
+Grafana dashboards query Prometheus using Istio metrics:
 
 ```promql
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m]))
+sum by (proxy_vendor) (rate(istio_requests_total[5m]))
 ```
 
 **Quick Start:** `./deploy.sh` → Answer 'y' to open dashboards → Grafana opens automatically at http://localhost:3000

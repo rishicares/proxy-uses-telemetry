@@ -10,7 +10,7 @@ This guide provides step-by-step instructions for deploying the proxy usage tele
 - kubectl CLI configured
 - Helm 3.x installed
 - Istio 1.20+ installed (or use auto-install)
-- Minimum 8 CPU cores and 16GB RAM
+- Sufficient resources for your deployment scale
 
 ## Quick Start
 
@@ -93,13 +93,13 @@ Edit `helm/proxy-telemetry/values.yaml`:
 
 ```yaml
 loadGenerator:
-  replicas: 21  # Total pods across all vendors
+  replicas: 9  # Total pods across all vendors (configurable)
   traffic:
     requestsPerSecond: 100  # Per pod
     concurrentRequests: 100
 ```
 
-Expected traffic: ~2,100 requests/second total
+Traffic generation depends on replica count and requests per second configuration
 
 ### Resource Limits
 

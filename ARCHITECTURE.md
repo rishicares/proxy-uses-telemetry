@@ -97,53 +97,44 @@ listeners:
 **Resource Requirements**:
 - Memory: 128 MB (request), 256 MB (limit)
 - CPU: 100m (request), 500m (limit)
-- ~50 MB actual usage per pod
+- Actual usage varies based on traffic volume
 
 #### 2. Vendor Attribution System
 
-**Strategy**: Pod labels + Prometheus relabeling
+**Strategy**: Istio telemetry header extraction
 
 **Implementation**:
 
-1. **Pod Labeling**:
+1. **Header Injection**: Load generators add X-Proxy-Vendor header to requests
+
+2. **Istio Telemetry Configuration**:
    ```yaml
-   metadata:
-     labels:
-       proxy-vendor: vendor-a
+   apiVersion: telemetry.istio.io/v1alpha1
+   kind: Telemetry
+   spec:
+     metrics:
+     - providers:
+       - name: prometheus
+       overrides:
+       - match:
+           metric: REQUEST_COUNT
+         tagOverrides:
+           proxy_vendor:
+             value: "request.headers['x-proxy-vendor'] | 'unknown'"
    ```
 
-2. **Kubernetes Service Discovery**:
-   ```yaml
-   kubernetes_sd_configs:
-     - role: pod
-       namespaces:
-         names: [crawlers]
-   ```
-
-3. **Prometheus Relabeling**:
-   ```yaml
-   relabel_configs:
-     - source_labels: [__meta_kubernetes_pod_label_proxy_vendor]
-       action: replace
-       target_label: proxy_vendor
-   ```
-
-4. **Envoy Tag Injection**:
-   ```yaml
-   stats_tags:
-     - tag_name: proxy_vendor
-       fixed_value: "vendor-a"  # Injected via init container
-   ```
+3. **Automatic Extraction**: Istio telemetry automatically extracts vendor from headers and adds to metrics
 
 **Advantages**:
 - [+] No IP range mapping needed
-- [+] Works with millions of IPs
+- [+] Works with any number of proxy IPs
 - [+] Simple and deterministic
 - [+] No external database required
+- [+] Automatic header extraction
 
 **Trade-offs**:
-- [!] Requires pod label management
-- [!] Crawler deployment must specify vendor
+- [!] Requires application to add X-Proxy-Vendor header
+- [!] Crawler deployment must specify vendor in headers
 
 #### 3. Metrics Collection Pipeline
 

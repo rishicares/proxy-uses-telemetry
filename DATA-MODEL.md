@@ -8,7 +8,7 @@ This document defines the complete data model for proxy usage telemetry, includi
 
 ### 1. Request Metrics
 
-#### `envoy_cluster_upstream_rq_total`
+#### `istio_requests_total`
 **Description**: Total count of requests sent through proxies
 
 **Type**: Counter
@@ -18,35 +18,33 @@ This document defines the complete data model for proxy usage telemetry, includi
 proxy_vendor: string        # Proxy vendor identifier (vendor-a, vendor-b, vendor-c)
 pod_name: string           # Kubernetes pod name
 namespace: string          # Always "crawlers"
-cluster_name: string       # Envoy cluster name (passthrough)
+destination_host: string   # Target hostname
 response_code: string      # HTTP response code (200, 404, 500, etc.)
 response_code_class: string # Response class (2xx, 4xx, 5xx)
-destination_host: string   # Target hostname (HTTP only)
-destination_ip: string     # Target IP address
 ```
 
 **Usage Examples**:
 ```promql
 # Requirement A: Requests per vendor
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m]))
+sum by (proxy_vendor) (rate(istio_requests_total[5m]))
 
 # Requests by vendor and response code
-sum by (proxy_vendor, response_code_class) (rate(envoy_cluster_upstream_rq_total[5m]))
+sum by (proxy_vendor, response_code_class) (rate(istio_requests_total[5m]))
 
 # Top pods by request count
-topk(10, sum by (pod_name, proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5m])))
+topk(10, sum by (pod_name, proxy_vendor) (rate(istio_requests_total[5m])))
 ```
 
 **Cardinality Estimate**:
-- Vendors: 3-10
-- Pods: 100-5000
+- Vendors: Configurable
+- Pods: Depends on deployment scale
 - Response codes: ~20
-- Destinations: 1000-10000
-- **Total series**: ~50K-500K
+- Destinations: Depends on traffic patterns
+- **Total series**: Varies with deployment size
 
 ### 2. Bandwidth Metrics
 
-#### `envoy_cluster_upstream_cx_tx_bytes_total`
+#### `istio_request_bytes_sent`
 **Description**: Total bytes sent (outgoing) through proxy connections
 
 **Type**: Counter
@@ -56,41 +54,41 @@ topk(10, sum by (pod_name, proxy_vendor) (rate(envoy_cluster_upstream_rq_total[5
 proxy_vendor: string
 pod_name: string
 namespace: string
-cluster_name: string
+destination_host: string
 ```
 
 **Usage Examples**:
 ```promql
 # Requirement C: Bandwidth sent per proxy per pod
-sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_tx_bytes_total[5m]))
+sum by (proxy_vendor, pod_name) (rate(istio_request_bytes_sent[5m]))
 
 # Total outbound bandwidth by vendor
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_cx_tx_bytes_total[5m]))
+sum by (proxy_vendor) (rate(istio_request_bytes_sent[5m]))
 
 # Top bandwidth consumers
-topk(20, rate(envoy_cluster_upstream_cx_tx_bytes_total[5m]))
+topk(20, rate(istio_request_bytes_sent[5m]))
 ```
 
 **Cardinality Estimate**:
-- Vendors: 3-10
-- Pods: 100-5000
-- **Total series**: ~300-50K
+- Vendors: Configurable
+- Pods: Depends on deployment scale
+- **Total series**: Varies with deployment size
 
-#### `envoy_cluster_upstream_cx_rx_bytes_total`
+#### `istio_response_bytes_received`
 **Description**: Total bytes received (incoming) through proxy connections
 
 **Type**: Counter
 
-**Labels**: Same as `envoy_cluster_upstream_cx_tx_bytes_total`
+**Labels**: Same as `istio_request_bytes_sent`
 
 **Usage Examples**:
 ```promql
 # Requirement D: Bandwidth received per proxy per pod
-sum by (proxy_vendor, pod_name) (rate(envoy_cluster_upstream_cx_rx_bytes_total[5m]))
+sum by (proxy_vendor, pod_name) (rate(istio_response_bytes_received[5m]))
 
 # Data transfer ratio (sent/received)
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_cx_tx_bytes_total[5m])) /
-sum by (proxy_vendor) (rate(envoy_cluster_upstream_cx_rx_bytes_total[5m]))
+sum by (proxy_vendor) (rate(istio_request_bytes_sent[5m])) /
+sum by (proxy_vendor) (rate(istio_response_bytes_received[5m]))
 ```
 
 ### 3. Destination Tracking
